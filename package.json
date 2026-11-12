@@ -1,6 +1,6 @@
 {
   "name": "paste-gun",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "description": "복사한 글자를 총알처럼 쏘아 붙여넣는 바탕화면 오버레이 (맥·윈도우)",

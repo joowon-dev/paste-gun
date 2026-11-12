@@ -281,9 +281,13 @@ sealed class Overlay : Form
         updateTimer.Tick += (_, _) => _ = CheckForUpdateAsync();
         updateTimer.Start();
 
-        // UI 자동화는 처음 부를 때 한참 걸린다(어셈블리를 싣고 COM 을 연다). 첫 발이 그걸
-        // 기다리다 시간 초과로 마우스에 쏘지 않게 미리 한 번 불러 둔다.
-        _ = Task.Run(() => { try { _ = AutomationElement.FocusedElement; } catch { /* 없으면 그만이다 */ } });
+        // 글자 커서를 묻는 길은 처음 부를 때 한참 걸린다(어셈블리를 싣고 COM 을 연다 — 러너에서
+        // 0.8초가 나왔다). 첫 발이 그걸 기다리지 않게 미리 한 번씩 불러 둔다.
+        _ = Task.Run(() =>
+        {
+            AccCaret(GetDesktopWindow());
+            try { _ = AutomationElement.FocusedElement; } catch { /* 없으면 그만이다 */ }
+        });
 
         _ = InitWebAsync();
     }
@@ -707,6 +711,7 @@ sealed class Overlay : Form
     [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint thread, ref GUITHREADINFO info);
     [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr hWnd, ref Point point);
 
+    [DllImport("user32.dll")] private static extern IntPtr GetDesktopWindow();
     [DllImport("oleacc.dll")]
     private static extern int AccessibleObjectFromWindow(
         IntPtr hWnd, uint id, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out object? found);
@@ -746,20 +751,19 @@ sealed class Overlay : Form
                 ? (recent.Point, "recent") : (Cursor.Position, "mouse");
 
         var watch = Stopwatch.StartNew();
+        // 받는 앱이 멈춰 있으면 대답이 안 온다. 총이 그걸 기다리며 같이 멈추면 안 되니
+        // 다른 스레드에서 묻고, 제때 안 오면 버린다.
+        var focus = info.hwndFocus;
+        var active = info.hwndActive;
+        var asking = Task.Run(() =>
+        {
+            if (Asks("acc") && known && (AccCaret(focus) ?? AccCaret(active)) is { } byAcc) return ((Point?)byAcc, "acc");
+            if (Asks("uia") && UiaCaret() is { } byUia) return ((Point?)byUia, "uia");
+            return ((Point?)null, "mouse");
+        });
         Point? found = null;
         var how = "mouse";
-        if (Asks("acc") && known)
-        {
-            found = AccCaret(info.hwndFocus) ?? AccCaret(info.hwndActive);
-            if (found is not null) how = "acc";
-        }
-        if (found is null && Asks("uia"))
-        {
-            // 받는 앱이 멈춰 있으면 대답이 안 온다. 총이 그걸 기다리며 같이 멈추면 안 된다.
-            var asking = Task.Run(UiaCaret);
-            if (await Task.WhenAny(asking, Task.Delay(150)) == asking) found = asking.Result;
-            if (found is not null) how = "uia";
-        }
+        if (await Task.WhenAny(asking, Task.Delay(200)) == asking) (found, how) = asking.Result;
         if (found is null || watch.ElapsedMilliseconds > 40) DebugLog($"캐럿 물음 {watch.ElapsedMilliseconds}ms {how}");
         if (watch.ElapsedMilliseconds > 40) caretQuietUntil = DateTime.UtcNow.AddSeconds(1);
 

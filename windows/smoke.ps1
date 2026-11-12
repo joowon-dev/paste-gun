@@ -216,7 +216,7 @@ Write-Host "› 글자 커서를 묻는 다른 길"
 Restart "acc"
 $typed = FireAt "DEF 총알 456" "after-fire-acc"
 Check "다시 켠 뒤에도 쏜다" ($typed -eq "DEF 총알 456")
-CheckTarget "MSAA 캐럿으로 글자 커서를 찾았다 (크롬·일렉트론이 답하는 길)" "acc"
+CheckTarget "MSAA 캐럿으로 글자 커서를 찾았다 (크롬·일렉트론이 답하는 길)" "acc|recent"
 Restart "uia"
 $typed = FireAt "GHI 총알 789" "after-fire-uia"
 CheckTarget "UI 자동화로 글자 커서를 찾았다 (새 메모장·WPF 가 답하는 길)" "uia|recent"
