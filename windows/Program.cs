@@ -761,7 +761,7 @@ sealed class Overlay : Form
             if (found is not null) how = "uia";
         }
         if (found is null || watch.ElapsedMilliseconds > 40) DebugLog($"캐럿 물음 {watch.ElapsedMilliseconds}ms {how}");
-        if (watch.ElapsedMilliseconds > 40) caretQuietUntil = DateTime.UtcNow.AddSeconds(2);
+        if (watch.ElapsedMilliseconds > 40) caretQuietUntil = DateTime.UtcNow.AddSeconds(1);
 
         if (found is { } point)
         {
@@ -816,6 +816,13 @@ sealed class Overlay : Form
             {
                 boxes = prev.GetBoundingRectangles();
                 if (boxes.Length > 0) return new Point((int)boxes[^1].Right, (int)(boxes[^1].Top + boxes[^1].Height / 2));
+            }
+
+            // 빈 칸에는 기댈 글자가 없다(빈 채팅 입력칸이 바로 이 경우다). 커서는 칸의 첫머리에 있다.
+            if (((TextPattern)pattern).DocumentRange.GetText(1).Length == 0)
+            {
+                var box = focused.Current.BoundingRectangle;
+                if (!box.IsEmpty) return new Point((int)box.Left + 6, (int)(box.Top + Math.Min(box.Height / 2, 16)));
             }
             return null;
         }
@@ -1046,9 +1053,13 @@ sealed class Overlay : Form
             // 덮어 칠해서, 커서를 무기고에 올리는 순간 무기고가 사라진다.
             if (!bornTransparent.TryGetValue(child, out var born))
             {
-                born = (GetWindowLong(child, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0;
+                // 웹뷰를 담는 컨트롤과 Chrome_WidgetWin_* 은 마우스를 받아야 하는 창이다. 이것들은
+                // 처음에 어떻게 달고 있었든 받을 때는 뗀다 — 안 떼면 클릭이 웹뷰까지 못 간다.
+                var name = ClassName(child);
+                born = (GetWindowLong(child, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0
+                    && name is "Chrome_RenderWidgetHostHWND" or "Intermediate D3D Window";
                 bornTransparent[child] = born;
-                DebugLog($"자식 {ClassName(child)} transparent={born}");
+                DebugLog($"자식 {name} keep={born}");
             }
             SetTransparent(child, wantPass || born);
             return true;

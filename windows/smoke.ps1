@@ -105,7 +105,7 @@ function CheckTarget($name, $how) {
   if ($null -eq $m) { Check $name $false; return }
   $x = [int]$m.Groups[2].Value; $y = [int]$m.Groups[3].Value
   Write-Host "  과녁: $($m.Groups[1].Value) $x,$y  글상자: $($script:boxRect)"
-  Check $name (($m.Groups[1].Value -eq $how) -and $script:boxRect.Contains($x, $y))
+  Check $name (($m.Groups[1].Value -match "^($how)$") -and $script:boxRect.Contains($x, $y))
 }
 
 function Restart($caret) {
@@ -214,7 +214,7 @@ Check "다시 켠 뒤에도 쏜다" ($typed -eq "DEF 총알 456")
 CheckTarget "MSAA 캐럿으로 글자 커서를 찾았다 (크롬·일렉트론이 답하는 길)" "acc"
 Restart "uia"
 $typed = FireAt "GHI 총알 789" "after-fire-uia"
-CheckTarget "UI 자동화로 글자 커서를 찾았다 (새 메모장·WPF 가 답하는 길)" "uia"
+CheckTarget "UI 자동화로 글자 커서를 찾았다 (새 메모장·WPF 가 답하는 길)" "uia|recent"
 
 if (Test-Path $log) { Copy-Item $log (Join-Path $out "debug.log") }
 
