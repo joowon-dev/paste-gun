@@ -281,6 +281,10 @@ sealed class Overlay : Form
         updateTimer.Tick += (_, _) => _ = CheckForUpdateAsync();
         updateTimer.Start();
 
+        // UI 자동화는 처음 부를 때 한참 걸린다(어셈블리를 싣고 COM 을 연다). 첫 발이 그걸
+        // 기다리다 시간 초과로 마우스에 쏘지 않게 미리 한 번 불러 둔다.
+        _ = Task.Run(() => { try { _ = AutomationElement.FocusedElement; } catch { /* 없으면 그만이다 */ } });
+
         _ = InitWebAsync();
     }
 
@@ -756,6 +760,7 @@ sealed class Overlay : Form
             if (await Task.WhenAny(asking, Task.Delay(150)) == asking) found = asking.Result;
             if (found is not null) how = "uia";
         }
+        if (found is null || watch.ElapsedMilliseconds > 40) DebugLog($"캐럿 물음 {watch.ElapsedMilliseconds}ms {how}");
         if (watch.ElapsedMilliseconds > 40) caretQuietUntil = DateTime.UtcNow.AddSeconds(2);
 
         if (found is { } point)
@@ -971,6 +976,8 @@ sealed class Overlay : Form
             // 윈도우는 키를 보내는 데 권한이 필요 없다. 언제나 「쏠 수 있음」이다.
             onTrusted: (handler) => { handler(true) },
           }
+          // 시험용 기록(PASTEGUN_DEBUG 일 때만 파일로 간다). 무기고가 마우스를 실제로 받는지 본다.
+          window.addEventListener('mousedown', (e) => post({ type: 'log', text: `mousedown ${e.clientX},${e.clientY} ${e.target.id || e.target.tagName}` }), true)
           window.addEventListener('error', (e) => post({ type: 'log', text: `${e.message} (${e.filename}:${e.lineno})` }))
           window.addEventListener('unhandledrejection', (e) => post({ type: 'log', text: `reject ${e.reason}` }))
           console.error = (...args) => post({ type: 'log', text: args.join(' ') })
