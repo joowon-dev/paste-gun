@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>붙여넣기 총</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 붙여넣는 자리에 대고 쏘는 장면. 화면 전체를 덮는다. -->
+  <canvas id="fx"></canvas>
+
+  <!-- 무기고. 평소에는 없다. -->
+  <section id="armory" hidden>
+    <header>
+      <h1>무기고</h1>
+      <button id="close" type="button" aria-label="닫기">×</button>
+    </header>
+
+    <div class="seg guns" id="guns"></div>
+
+    <h2>탄창</h2>
+    <div class="chips" id="mags"></div>
+    <div id="editor">
+      <input id="mag-name" type="text" maxlength="24" spellcheck="false" autocomplete="off">
+      <ol id="rounds"></ol>
+      <div class="actions" id="actions"></div>
+    </div>
+
+    <h2>단축키</h2>
+    <div id="bindings"></div>
+    <p id="key-note"></p>
+
+    <h2>그 밖</h2>
+    <div class="row">
+      <span class="label">기관총이 글 사이에 누르는 키</span>
+      <div class="seg" id="separators"></div>
+    </div>
+    <div class="row">
+      <span class="label">총소리</span>
+      <div class="seg" id="sound"></div>
+    </div>
+  </section>
+
+  <!-- 늘 떠 있는 것. 마우스를 받지 않는다. -->
+  <section id="hud">
+    <p id="notice" hidden></p>
+    <div id="top">
+      <canvas id="gun" width="172" height="76"></canvas>
+      <div id="ammo"><b id="left"></b><span id="total"></span></div>
+    </div>
+    <div id="title"><b id="gun-name"></b><span id="mag-name-hud"></span><kbd id="trigger-key"></kbd></div>
+    <div id="pips"></div>
+    <p id="next"><span id="next-label"></span><b id="next-text"></b></p>
+  </section>
+
+  <!-- 셸 없이 브라우저로 열었을 때만 보인다. 쏜 것이 여기에 찍힌다. -->
+  <pre id="range" hidden></pre>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

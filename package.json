@@ -1,0 +1,20 @@
+{
+  "name": "paste-gun",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "복사한 글자를 총알처럼 쏘아 붙여넣는 바탕화면 오버레이 (맥·윈도우)",
+  "scripts": {
+    "start": "./mac/build.sh && { pkill -f MacOS/PasteGun || true; } && while pgrep -f MacOS/PasteGun >/dev/null; do sleep 0.2; done && open 'dist/mac/Paste Gun.app'",
+    "build:mac": "./mac/build.sh --zip",
+    "build:win": "./windows/build.sh --zip",
+    "dmg": "./mac/dmg.sh",
+    "notarize": "./mac/notarize.sh",
+    "icons": "./scripts/make-icons.sh",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8"
+  }
+}
