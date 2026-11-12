@@ -11,11 +11,15 @@
 // 맥과 달리 권한이 필요 없다. 다만 **관리자 권한으로 뜬 창에는 못 쏜다**(UIPI 가
 // 낮은 권한의 SendInput 을 막는다) — 에러 없이 조용히 안 찍힌다.
 //
-// **이 셸은 실제 윈도우에서 돌려 본 적이 없다.** 컴파일까지만 이 맥에서 확인했다.
+// 실제 윈도우에서는 CI 러너가 돌려 본다(windows/smoke.ps1).
 
 using System.Diagnostics;
+using System.IO;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Windows.Automation;
+using System.Windows.Automation.Text;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 using Microsoft.Win32;
@@ -650,14 +654,14 @@ sealed class Overlay : Form
         if (DryRun)
         {
             DebugLog($"발사(연습) {Js(text)} after={after ?? "-"}");
-            ShowShot(text);
+            await ShowShotAsync(text);
             return;
         }
 
         await WaitForModifiersUpAsync();
 
         // **붙여넣기 전에 묻는다.** 붙여넣고 나면 커서는 이미 글 끝으로 가 있다.
-        ShowShot(text);
+        await ShowShotAsync(text);
 
         if (typed)
         {
@@ -699,22 +703,128 @@ sealed class Overlay : Form
     [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint thread, ref GUITHREADINFO info);
     [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr hWnd, ref Point point);
 
+    [DllImport("oleacc.dll")]
+    private static extern int AccessibleObjectFromWindow(
+        IntPtr hWnd, uint id, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out object? found);
+    private const uint OBJID_CARET = 0xFFFFFFF8;
+
+    /// <summary>시험용. "caret"·"acc"·"uia" 가운데 하나만 쓰게 한다(smoke.ps1).</summary>
+    private static readonly string? CaretOnly = Environment.GetEnvironmentVariable("PASTEGUN_CARET");
+    private static bool Asks(string way) => CaretOnly is null || CaretOnly == way;
+
+    private DateTime caretQuietUntil = DateTime.MinValue;
+    private (Point Point, DateTime At)? lastCaret;
+
     /// <summary>
-    /// 붙여넣는 자리를 렌더러에 알린다 — 총이 거기로 와서 쏜다.
+    /// 지금 글자가 들어갈 자리(글자 커서)의 화면 좌표. 맥 셸의 caretPoint 와 같은 일이다.
     ///
-    /// 앞에 있는 창의 글자 커서를 묻는다(GetGUIThreadInfo, 스레드 0 = 앞 창). <b>모든 앱이
-    /// 답해 주지는 않는다</b> — 시스템 캐럿을 안 쓰는 앱(크롬·일렉트론 계열 등)은 없다고
-    /// 나온다. 그럴 때는 마우스 자리로 대신한다. 맥 셸의 caretPoint 와 같은 일이다.
+    /// <b>물어볼 데가 셋이고, 앱마다 답하는 데가 다르다.</b> 싼 것부터 묻는다.
+    ///   1. 시스템 캐럿(GetGUIThreadInfo) — 옛날식 앱(메모장·카카오톡·오피스 일부).
+    ///   2. MSAA 의 캐럿 객체(OBJID_CARET) — 크롬·엣지·일렉트론(VS Code·슬랙·디스코드).
+    ///      이들은 시스템 캐럿을 안 만들지만 이 물음에는 답한다.
+    ///   3. UI 자동화의 글 범위 — 새 메모장·WPF·WinUI 앱.
+    /// 셋 다 모르면 마우스 자리다. 1 만 묻던 때는 브라우저에서 총이 늘 마우스에 붙어 있었다.
     /// </summary>
-    private void ShowShot(string text)
+    private async Task<(Point Point, string How)> AskCaretAsync()
     {
-        var point = Cursor.Position;
         var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
-        if (GetGUIThreadInfo(0, ref info) && info.hwndCaret != IntPtr.Zero)
+        var known = GetGUIThreadInfo(0, ref info);
+        if (Asks("caret") && known && info.hwndCaret != IntPtr.Zero)
         {
             var caret = new Point(info.rcCaret.left, (info.rcCaret.top + info.rcCaret.bottom) / 2);
-            if (ClientToScreen(info.hwndCaret, ref caret)) point = caret;
+            if (ClientToScreen(info.hwndCaret, ref caret)) return (caret, "caret");
         }
+
+        // 대답이 느린 앱이 있다. 초당 30발을 쏘면서 발마다 그걸 기다리면 줄이 밀린다. 한 번
+        // 느렸으면 잠깐은 묻지 않는다 — 그동안은 마지막으로 안 자리에 쏜다(마우스로 튀지 않게).
+        if (DateTime.UtcNow < caretQuietUntil)
+            return lastCaret is { } recent && DateTime.UtcNow - recent.At < TimeSpan.FromSeconds(4)
+                ? (recent.Point, "recent") : (Cursor.Position, "mouse");
+
+        var watch = Stopwatch.StartNew();
+        Point? found = null;
+        var how = "mouse";
+        if (Asks("acc") && known)
+        {
+            found = AccCaret(info.hwndFocus) ?? AccCaret(info.hwndActive);
+            if (found is not null) how = "acc";
+        }
+        if (found is null && Asks("uia"))
+        {
+            // 받는 앱이 멈춰 있으면 대답이 안 온다. 총이 그걸 기다리며 같이 멈추면 안 된다.
+            var asking = Task.Run(UiaCaret);
+            if (await Task.WhenAny(asking, Task.Delay(150)) == asking) found = asking.Result;
+            if (found is not null) how = "uia";
+        }
+        if (watch.ElapsedMilliseconds > 40) caretQuietUntil = DateTime.UtcNow.AddSeconds(2);
+
+        if (found is { } point)
+        {
+            lastCaret = (point, DateTime.UtcNow);
+            return (point, how);
+        }
+        return (Cursor.Position, "mouse");
+    }
+
+    private static Point? AccCaret(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero) return null;
+        try
+        {
+            var iid = typeof(Accessibility.IAccessible).GUID;
+            if (AccessibleObjectFromWindow(hWnd, OBJID_CARET, ref iid, out var found) != 0
+                || found is not Accessibility.IAccessible caret) return null;
+            caret.accLocation(out var x, out var y, out var w, out var h, 0);
+            // 캐럿이 없는 창은 0 만 돌려준다.
+            if ((w == 0 && h == 0) || (x == 0 && y == 0)) return null;
+            return new Point(x, y + h / 2);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static Point? UiaCaret()
+    {
+        try
+        {
+            var focused = AutomationElement.FocusedElement;
+            if (focused is null || !focused.TryGetCurrentPattern(TextPattern.Pattern, out var pattern)) return null;
+            var selection = ((TextPattern)pattern).GetSelection();
+            if (selection.Length == 0) return null;
+            var range = selection[0];
+
+            // 고른 글이 있으면 그 첫머리가 과녁이다. 빈 범위에도 네모를 주는 앱이 있다.
+            var boxes = range.GetBoundingRectangles();
+            if (boxes.Length > 0) return new Point((int)boxes[0].Left, (int)(boxes[0].Top + boxes[0].Height / 2));
+
+            // 빈 범위의 네모를 안 주는 앱. 맥과 같이 바로 뒤 글자, 없으면 바로 앞 글자에서 얻는다.
+            var next = range.Clone();
+            if (next.MoveEndpointByUnit(TextPatternRangeEndpoint.End, TextUnit.Character, 1) == 1)
+            {
+                boxes = next.GetBoundingRectangles();
+                if (boxes.Length > 0) return new Point((int)boxes[0].Left, (int)(boxes[0].Top + boxes[0].Height / 2));
+            }
+            var prev = range.Clone();
+            if (prev.MoveEndpointByUnit(TextPatternRangeEndpoint.Start, TextUnit.Character, -1) == -1)
+            {
+                boxes = prev.GetBoundingRectangles();
+                if (boxes.Length > 0) return new Point((int)boxes[^1].Right, (int)(boxes[^1].Top + boxes[^1].Height / 2));
+            }
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>붙여넣는 자리를 렌더러에 알린다 — 총이 거기로 와서 쏜다.</summary>
+    private async Task ShowShotAsync(string text)
+    {
+        var (point, how) = await AskCaretAsync();
+        DebugLog($"과녁 {how} {point.X},{point.Y}");
 
         // 화면 좌표는 실제 픽셀이고 렌더러는 CSS 픽셀로 그린다. 배율로 나눠서 넘긴다.
         if (!ready) return;
@@ -920,15 +1030,42 @@ sealed class Overlay : Form
 
         // **창 하나에만 걸면 모자란다 — WebView2 가 자기 자식 창을 만든다.** 자식에는
         // 스타일이 안 붙어서, 자식이 클릭을 삼키면 밑의 앱을 누를 수가 없다.
-        Touch(Handle);
-        EnumChildWindows(Handle, (child, _) => { Touch(child); return true; }, IntPtr.Zero);
+        SetTransparent(Handle, wantPass);
+        EnumChildWindows(Handle, (child, _) =>
+        {
+            // **받을 때는 「떼는」 것이 아니라 「원래대로 돌려놓는」 것이다.** 웹뷰의 자식 가운데는
+            // 처음부터 WS_EX_TRANSPARENT 인 것이 있다(크로미움의 Chrome Legacy Window — 그림 위에
+            // 얹힌 빈 창이라 「나는 안 칠한다」는 뜻으로 달고 있다). 그것까지 떼면 그 창이 그림을
+            // 덮어 칠해서, 커서를 무기고에 올리는 순간 무기고가 사라진다.
+            if (!bornTransparent.TryGetValue(child, out var born))
+            {
+                born = (GetWindowLong(child, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0;
+                bornTransparent[child] = born;
+                DebugLog($"자식 {ClassName(child)} transparent={born}");
+            }
+            SetTransparent(child, wantPass || born);
+            return true;
+        }, IntPtr.Zero);
 
-        void Touch(IntPtr hWnd)
+        static void SetTransparent(IntPtr hWnd, bool on)
         {
             var style = GetWindowLong(hWnd, GWL_EXSTYLE);
-            SetWindowLong(hWnd, GWL_EXSTYLE,
-                wantPass ? style | WS_EX_TRANSPARENT : style & ~WS_EX_TRANSPARENT);
+            var next = on ? style | WS_EX_TRANSPARENT : style & ~WS_EX_TRANSPARENT;
+            if (next != style) SetWindowLong(hWnd, GWL_EXSTYLE, next);
         }
+    }
+
+    /// <summary>우리가 손대기 전에 그 자식 창이 WS_EX_TRANSPARENT 였는가. 처음 볼 때 한 번 적는다.</summary>
+    private readonly Dictionary<IntPtr, bool> bornTransparent = [];
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder text, int max);
+
+    private static string ClassName(IntPtr hWnd)
+    {
+        var text = new System.Text.StringBuilder(128);
+        GetClassName(hWnd, text, text.Capacity);
+        return text.ToString();
     }
 
     /// <summary>글자 칸을 눌렀다. 이제서야 키보드를 가져온다.</summary>
@@ -1012,6 +1149,7 @@ sealed class Overlay : Form
                     if (Str(body, "text") is { } status && status != StatusText)
                     {
                         StatusText = status;
+                        DebugLog($"status {status}");
                         SettingsChanged?.Invoke();
                     }
                     break;
@@ -1021,6 +1159,7 @@ sealed class Overlay : Form
                     panelRect = w > 0
                         ? new Rectangle((int)Num(body, "x"), (int)Num(body, "y"), (int)w, (int)Num(body, "h"))
                         : Rectangle.Empty;
+                    DebugLog($"panelRect {panelRect.X + Bounds.Left},{panelRect.Y + Bounds.Top},{panelRect.Width},{panelRect.Height}");
                     break;
 
                 case "closePanel": SetPanel(false); break;

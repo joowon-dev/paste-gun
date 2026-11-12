@@ -4,6 +4,8 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- 글자 커서 자리를 UI 자동화로 묻는다(System.Windows.Automation). 런타임은 이미 받는 것 안에 있다. -->
+    <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>PasteGun</AssemblyName>
