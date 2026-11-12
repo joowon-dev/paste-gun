@@ -146,9 +146,14 @@ function Differ($a, $b) {
 }
 [Keys2]::SetCursorPos(5, 5) | Out-Null
 PressPanelKey
-Start-Sleep 2
-$m = LastMatch "panelRect (-?\d+),(-?\d+),(\d+),(\d+)"
-$open = ($null -ne $m) -and ([int]$m.Groups[3].Value -gt 0)
+# 러너가 느린 날은 무기고가 그려지기까지 2초가 넘는다. 자리를 알려 올 때까지 기다린다.
+$open = $false
+for ($i = 0; $i -lt 20 -and -not $open; $i += 1) {
+  Start-Sleep -Milliseconds 500
+  $m = LastMatch "panelRect (-?\d+),(-?\d+),(\d+),(\d+)"
+  $open = ($null -ne $m) -and ([int]$m.Groups[3].Value -gt 0)
+}
+Start-Sleep 1
 Check "Alt+Shift+A 로 무기고가 열렸다" $open
 if ($open) {
   $rect = New-Object System.Drawing.Rectangle ([int]$m.Groups[1].Value), ([int]$m.Groups[2].Value), ([int]$m.Groups[3].Value), ([int]$m.Groups[4].Value)
