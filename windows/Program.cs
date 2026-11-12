@@ -1045,6 +1045,12 @@ sealed class Overlay : Form
         // **창 하나에만 걸면 모자란다 — WebView2 가 자기 자식 창을 만든다.** 자식에는
         // 스타일이 안 붙어서, 자식이 클릭을 삼키면 밑의 앱을 누를 수가 없다.
         SetTransparent(Handle, wantPass);
+
+        // **받는 동안에는 컬러 키도 뗀다.** 컬러 키가 걸린 레이어드 창은 「키 색인 픽셀」에서 클릭을
+        // 통과시키는데, 웹뷰의 그림은 자식 창이 따로 합성해서 이 창 자신의 표면은 온통 검정(= 키 색)이다.
+        // 그래서 스타일을 떼도 무기고의 버튼이 하나도 안 눌렸다. 투명은 DWM 픽셀 알파가 맡고 있어서
+        // 키를 떼도 보이는 것은 같다. 커서가 무기고 위에 있는 동안만이다.
+        SetLayeredWindowAttributes(Handle, 0, 255, wantPass ? LWA_COLORKEY | LWA_ALPHA : LWA_ALPHA);
         EnumChildWindows(Handle, (child, _) =>
         {
             // **받을 때는 「떼는」 것이 아니라 「원래대로 돌려놓는」 것이다.** 웹뷰의 자식 가운데는
